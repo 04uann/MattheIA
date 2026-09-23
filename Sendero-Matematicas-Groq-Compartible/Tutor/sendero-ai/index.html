@@ -81,6 +81,20 @@
     padding: 0.3rem 0.65rem; border-radius: 20px; font-weight: 500;
   }
 
+
+  /* ---------------- AUTH / MAGIC LINK ---------------- */
+  #view-auth.active { display:flex; align-items:center; justify-content:center; padding:2rem 1.4rem; }
+  .auth-card { max-width:420px; width:100%; background:var(--surface); border:1px solid var(--border); border-radius:18px; padding:1.6rem; box-shadow:0 8px 30px rgba(30,38,53,.06); }
+  .auth-card .ob-eyebrow { margin-bottom:.5rem; }
+  .auth-card h2 { font-family:var(--display); font-size:1.55rem; margin:0 0 .5rem; }
+  .auth-card p { color:var(--ink-soft); font-size:.92rem; line-height:1.5; }
+  .auth-card .ob-input { margin-bottom:.8rem; }
+  .auth-status { min-height:1.3em; margin:.75rem 0 0; font-size:.82rem; color:var(--ink-soft); }
+  .auth-status.error { color:var(--danger); }
+  .auth-status.success { color:var(--success); }
+  .auth-email { font-family:var(--mono); font-size:.78rem; }
+  .btn-secondary { width:100%; margin-top:.7rem; padding:.75rem; border:1px solid var(--border); border-radius:12px; background:var(--surface-alt); color:var(--ink); font-weight:600; }
+
   /* ---------------- VIEWS ---------------- */
   .view { flex: 1; overflow-y: auto; display: none; }
   .view.active { display: block; }
@@ -271,6 +285,20 @@
         <div><h4 id="topName">Estudiante</h4><p id="topSubject">—</p></div>
       </div>
       <div class="level-chip" id="topLevel">Nivel 1</div>
+    </div>
+
+
+    <!-- AUTH / MAGIC LINK -->
+    <div class="view active" id="view-auth">
+      <div class="auth-card">
+        <p class="ob-eyebrow">Acceso seguro</p>
+        <h2>Entra a MatheIA</h2>
+        <p>Escribe tu correo y te enviaremos un enlace mágico. No necesitas contraseña.</p>
+        <input class="ob-input" id="authEmail" type="email" autocomplete="email" placeholder="tu@email.com">
+        <button class="btn-primary" id="btnMagicLink">Enviar enlace de acceso</button>
+        <button class="btn-secondary" id="btnAuthReset" style="display:none;">Usar otro correo</button>
+        <p class="auth-status" id="authStatus" role="status"></p>
+      </div>
     </div>
 
     <!-- ONBOARDING / DIAGNÓSTICO -->
@@ -520,6 +548,7 @@
         <div class="field-row"><span>Nivel actual</span><span id="pfLevel">—</span></div>
         <div class="field-row"><span>Base de datos</span><span id="supabaseStatus">Pendiente</span></div>
         <button class="reset-btn" id="resetBtn">Reiniciar sendero</button>
+        <button class="btn-secondary" id="signOutBtn">Cerrar sesión</button>
       </div>
     </div>
 
@@ -730,10 +759,79 @@ async function saveProfile() {
   return await sincronizarUsuario();
 }
 
+// ---------- auth / magic link ----------
+function setAuthStatus(message, type=''){
+  const el = document.getElementById('authStatus');
+  if(!el) return;
+  el.textContent = message;
+  el.className = 'auth-status' + (type ? ' '+type : '');
+}
+
+function showAuth(){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-auth').classList.add('active');
+}
+
+async function sendMagicLink(){
+  const input = document.getElementById('authEmail');
+  const btn = document.getElementById('btnMagicLink');
+  const email = input.value.trim();
+  if(!email || !input.checkValidity()){
+    setAuthStatus('Escribe un correo electrónico válido.', 'error');
+    input.focus();
+    return;
+  }
+
+  btn.disabled = true;
+  setAuthStatus('Enviando enlace…');
+  try{
+    const { error } = await dbClient.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: window.location.origin
+      }
+    });
+    if(error) throw error;
+    setAuthStatus('Enlace enviado. Revisa tu correo y abre el enlace para continuar.', 'success');
+    input.disabled = true;
+    document.getElementById('btnAuthReset').style.display = 'block';
+  }catch(error){
+    console.error('Error enviando Magic Link:', error);
+    setAuthStatus(error.message || 'No se pudo enviar el enlace de acceso.', 'error');
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('btnMagicLink').addEventListener('click', sendMagicLink);
+document.getElementById('authEmail').addEventListener('keydown', e=>{
+  if(e.key==='Enter') sendMagicLink();
+});
+document.getElementById('btnAuthReset').addEventListener('click', ()=>{
+  const input=document.getElementById('authEmail');
+  input.disabled=false;
+  input.value='';
+  input.focus();
+  document.getElementById('btnAuthReset').style.display='none';
+  setAuthStatus('');
+});
+
+document.getElementById('signOutBtn').addEventListener('click', async ()=>{
+  const { error } = await dbClient.auth.signOut();
+  if(error){
+    console.error('Error cerrando sesión:', error);
+    alert('No se pudo cerrar sesión.');
+  } else {
+    location.reload();
+  }
+});
+
 // ---------- navigation ----------
 function goView(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-  document.getElementById('view-'+name).classList.add('active');
+  const target = document.getElementById('view-'+name);
+  if (!target) return;
+  target.classList.add('active');
   document.querySelectorAll('.nav-btn, .tab-btn').forEach(b=>{
     b.classList.toggle('active', b.dataset.view===name);
   });
@@ -1254,6 +1352,16 @@ document.getElementById('resetBtn').addEventListener('click', async ()=>{
 
 // ---------- boot ----------
 (async function boot(){
+  const { data: { session } } = await dbClient.auth.getSession();
+
+  if(!session){
+    showAuth();
+    return;
+  }
+
+  // El ID de la fila de usuarios queda ligado al usuario autenticado.
+  try{ localStorage.setItem(STUDENT_ID_KEY, session.user.id); }catch(e){}
+
   const saved = await loadProfile();
 
   if(saved && saved.profile){
@@ -1279,10 +1387,18 @@ document.getElementById('resetBtn').addEventListener('click', async ()=>{
     setSupabaseStatus('Datos cargados');
     requestNextTurn(null);
   } else {
+    // Usuario autenticado pero todavía sin perfil académico.
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    document.getElementById('view-onboard').classList.add('active');
     setSupabaseStatus('Esperando registro');
   }
+
+  dbClient.auth.onAuthStateChange((event, newSession)=>{
+    if(event === 'SIGNED_OUT' || !newSession){
+      showAuth();
+    }
+  });
 })();
 </script>
 </body>
 </html>
-
