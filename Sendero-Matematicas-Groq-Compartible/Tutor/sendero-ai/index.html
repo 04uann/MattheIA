@@ -1282,6 +1282,12 @@ document.getElementById('resetBtn').addEventListener('click', async ()=>{
     setSupabaseStatus('Esperando registro');
   }
 })();
+  dbClient.auth.signInWithOtp({
+  email: email,
+  options: {
+    emailRedirectTo: window.location.origin
+  }
+})
 </script>
 </body>
 </html>
